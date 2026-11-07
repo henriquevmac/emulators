@@ -1,5 +1,7 @@
-const ROM_START: u16 = 0x200;
+const ROM_START: usize = 0x200;
 const FONT_START: usize = 0x50;
+const MEMORY_SIZE: usize = 4096;
+const MAX_ROM_SIZE: usize = MEMORY_SIZE - ROM_START;
 
 const FONT: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -21,7 +23,7 @@ const FONT: [u8; 80] = [
 ];
 
 pub struct Chip8 {
-    memory: [u8; 4096],
+    memory: [u8; MEMORY_SIZE],
     v: [u8; 16],
     i: u16,
     pc: u16,
@@ -29,23 +31,29 @@ pub struct Chip8 {
 }
 
 impl Chip8 {
-    pub fn new() -> Self {
-        let mut memory: [u8; 4096] = [0; 4096];
+    fn new() -> Self {
+        let mut memory: [u8; MEMORY_SIZE] = [0; MEMORY_SIZE];
         memory[FONT_START..FONT_START + FONT.len()].copy_from_slice(FONT.as_slice());
         let stack: Vec<u16> = Vec::new();
         Chip8 {
             memory,
             v: [0; 16],
             i: 0,
-            pc: ROM_START,
+            pc: ROM_START as u16,
             stack,
         }
     }
-}
 
-impl Default for Chip8 {
-    fn default() -> Self {
-        Self::new()
+    pub fn from_rom(rom: &[u8]) -> Result<Self, String> {
+        if rom.is_empty() {
+            return Err("Empty ROM".to_string());
+        }
+        if rom.len() > MAX_ROM_SIZE {
+            return Err("ROM is too large".to_string());
+        }
+        let mut machine = Self::new();
+        machine.memory[ROM_START..ROM_START + rom.len()].copy_from_slice(rom);
+        Ok(machine)
     }
 }
 
@@ -58,5 +66,31 @@ mod tests {
         let machine = Chip8::new();
         assert_eq!(machine.pc, 0x200);
         assert_eq!(machine.memory[0x50], 0xF0);
+    }
+
+    #[test]
+    fn load_valid_rom() {
+        let rom: [u8; 3] = [0x80, 0x91, 0x45];
+        let machine_res = Chip8::from_rom(&rom);
+        assert!(machine_res.is_ok());
+        let machine = machine_res.unwrap();
+        assert_eq!(&machine.memory[ROM_START..ROM_START+3], &rom);
+    }
+
+    #[test]
+    fn allow_max_rom() {
+        let rom: [u8; MAX_ROM_SIZE] = [0x80; MAX_ROM_SIZE];
+        assert!(Chip8::from_rom(&rom).is_ok());
+    }
+
+    #[test]
+    fn fail_empty_rom() {
+        assert!(Chip8::from_rom(&[]).is_err());
+    }
+
+    #[test]
+    fn fail_too_big_rom() {
+        let rom: [u8; MAX_ROM_SIZE + 1] = [0x80; MAX_ROM_SIZE + 1];
+        assert!(Chip8::from_rom(&rom).is_err());
     }
 }
