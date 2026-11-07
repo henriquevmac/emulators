@@ -3,6 +3,13 @@ const FONT_START: usize = 0x50;
 const MEMORY_SIZE: usize = 4096;
 const MAX_ROM_SIZE: usize = MEMORY_SIZE - ROM_START;
 
+const X_MASK: u16 = 0x0F00;
+const Y_MASK: u16 = 0x00F0;
+const N_MASK: u16 = 0x000F;
+const NN_MASK: u16 = 0x00FF;
+const NNN_MASK: u16 = 0x0FFF;
+const KIND_MASK: u16 = 0xF000;
+
 const FONT: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -63,6 +70,30 @@ impl Chip8 {
         self.pc += 1;
         first << 8 | second
     }
+
+    fn get_x(opcode: u16) -> usize {
+        ((opcode & X_MASK) >> 8) as usize
+    }
+
+    fn get_y(opcode: u16) -> usize {
+        ((opcode & Y_MASK) >> 4) as usize
+    }
+
+    fn get_n(opcode: u16) -> u8 {
+        (opcode & N_MASK) as u8
+    }
+
+    fn get_nn(opcode: u16) -> u8 {
+        (opcode & NN_MASK) as u8
+    }
+
+    fn get_nnn(opcode: u16) -> u16 {
+        opcode & NNN_MASK
+    }
+
+    fn get_kind(opcode: u16) -> u8 {
+        ((opcode & KIND_MASK) >> 12) as u8
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +142,16 @@ mod tests {
         let opcode = machine.fetch();
         assert_eq!(opcode, 0xA2F0);
         assert_eq!(machine.pc, 0x204);
+    }
+
+    #[test]
+    fn decoding_correctly() {
+        let opcode: u16 = 0xD123;
+        assert_eq!(Chip8::get_x(opcode), 1);
+        assert_eq!(Chip8::get_y(opcode), 2);
+        assert_eq!(Chip8::get_n(opcode), 3);
+        assert_eq!(Chip8::get_nn(opcode), 0x23);
+        assert_eq!(Chip8::get_nnn(opcode), 0x123);
+        assert_eq!(Chip8::get_kind(opcode), 0xD);
     }
 }
