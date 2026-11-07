@@ -55,6 +55,14 @@ impl Chip8 {
         machine.memory[ROM_START..ROM_START + rom.len()].copy_from_slice(rom);
         Ok(machine)
     }
+
+    pub fn fetch(&mut self) -> u16 {
+        let first = self.memory[self.pc as usize] as u16;
+        self.pc += 1;
+        let second = self.memory[self.pc as usize] as u16;
+        self.pc += 1;
+        first << 8 | second
+    }
 }
 
 #[cfg(test)]
@@ -74,7 +82,7 @@ mod tests {
         let machine_res = Chip8::from_rom(&rom);
         assert!(machine_res.is_ok());
         let machine = machine_res.unwrap();
-        assert_eq!(&machine.memory[ROM_START..ROM_START+3], &rom);
+        assert_eq!(&machine.memory[ROM_START..ROM_START + 3], &rom);
     }
 
     #[test]
@@ -92,5 +100,16 @@ mod tests {
     fn fail_too_big_rom() {
         let rom: [u8; MAX_ROM_SIZE + 1] = [0x80; MAX_ROM_SIZE + 1];
         assert!(Chip8::from_rom(&rom).is_err());
+    }
+
+    #[test]
+    fn fetching_correctly() {
+        let mut machine = Chip8::from_rom(&[0x12, 0x34, 0xA2, 0xF0]).unwrap();
+        let opcode = machine.fetch();
+        assert_eq!(opcode, 0x1234);
+        assert_eq!(machine.pc, 0x202);
+        let opcode = machine.fetch();
+        assert_eq!(opcode, 0xA2F0);
+        assert_eq!(machine.pc, 0x204);
     }
 }
