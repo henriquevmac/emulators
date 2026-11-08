@@ -12,7 +12,9 @@ fn run() -> Result<(), String> {
     let mut machine =
         Chip8::from_rom(&rom_bytes).map_err(|e| format!("Invalid ROM {filename}: {e}"))?;
 
-    Ok(())
+    loop {
+        machine.step();
+    }
 }
 
 fn main() {
