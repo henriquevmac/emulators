@@ -32,7 +32,7 @@ fn run() -> Result<(), String> {
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         for _ in 0..STEPS_PER_FRAME {
-            machine.step();
+            machine.step()?;
         }
 
         for (i, pixel) in machine.display().iter().enumerate() {

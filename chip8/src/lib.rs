@@ -5,6 +5,7 @@ const MAX_ROM_SIZE: usize = MEMORY_SIZE - ROM_START;
 pub const PIXEL_WIDTH: usize = 64;
 pub const PIXEL_HEIGHT: usize = 32;
 const NUM_PIXELS: usize = PIXEL_WIDTH * PIXEL_HEIGHT;
+const STACK_SIZE: usize = 16;
 
 const X_MASK: u16 = 0x0F00;
 const Y_MASK: u16 = 0x00F0;
@@ -104,7 +105,7 @@ impl Chip8 {
         y * PIXEL_WIDTH + x
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> Result<(), String> {
         let opcode = self.fetch();
         let x = Self::get_x(opcode);
         let y = Self::get_y(opcode);
@@ -115,17 +116,85 @@ impl Chip8 {
         match kind {
             0x0 => match nn {
                 0xE0 => self.framebuffer.fill(false),
+                0xEE => {
+                    self.pc = self
+                        .stack
+                        .pop()
+                        .ok_or_else(|| format!("00EE at {:#05X}: stack empty", self.pc - 2))?;
+                }
                 _ => unimplemented!("{opcode:#06X}"),
             },
             0x1 => self.pc = nnn,
-            0x2 => unimplemented!("{opcode:#06X}"),
-            0x3 => unimplemented!("{opcode:#06X}"),
-            0x4 => unimplemented!("{opcode:#06X}"),
-            0x5 => unimplemented!("{opcode:#06X}"),
+            0x2 => {
+                if self.stack.len() == STACK_SIZE {
+                    return Err(format!("Stack is already full: {:#05X}", self.pc - 2));
+                }
+                self.stack.push(self.pc);
+                self.pc = nnn;
+            }
+            0x3 => {
+                if self.v[x] == nn {
+                    self.pc += 2;
+                }
+            }
+            0x4 => {
+                if self.v[x] != nn {
+                    self.pc += 2;
+                }
+            }
+            0x5 => {
+                if self.v[x] == self.v[y] {
+                    self.pc += 2;
+                }
+            }
             0x6 => self.v[x] = nn,
             0x7 => self.v[x] = self.v[x].wrapping_add(nn),
-            0x8 => unimplemented!("{opcode:#06X}"),
-            0x9 => unimplemented!("{opcode:#06X}"),
+            0x8 => match n {
+                0x0 => self.v[x] = self.v[y],
+                0x1 => {
+                    self.v[x] |= self.v[y];
+                    self.v[0xF] = 0;
+                }
+                0x2 => {
+                    self.v[x] &= self.v[y];
+                    self.v[0xF] = 0;
+                }
+                0x3 => {
+                    self.v[x] ^= self.v[y];
+                    self.v[0xF] = 0;
+                }
+                0x4 => {
+                    let (result, carry) = self.v[x].overflowing_add(self.v[y]);
+                    self.v[x] = result;
+                    self.v[0xF] = carry as u8;
+                }
+                0x5 => {
+                    let (result, borrow) = self.v[x].overflowing_sub(self.v[y]);
+                    self.v[x] = result;
+                    self.v[0xF] = !borrow as u8;
+                }
+                0x6 => {
+                    let value = self.v[y];
+                    self.v[x] = value >> 1;
+                    self.v[0xF] = value & 1;
+                }
+                0x7 => {
+                    let (result, borrow) = self.v[y].overflowing_sub(self.v[x]);
+                    self.v[x] = result;
+                    self.v[0xF] = !borrow as u8;
+                }
+                0xE => {
+                    let value = self.v[y];
+                    self.v[x] = value << 1;
+                    self.v[0xF] = value >> 7;
+                }
+                _ => unimplemented!("{opcode:#06X}"),
+            },
+            0x9 => {
+                if self.v[x] != self.v[y] {
+                    self.pc += 2;
+                }
+            }
             0xA => self.i = nnn,
             0xB => unimplemented!("{opcode:#06X}"),
             0xC => unimplemented!("{opcode:#06X}"),
@@ -157,6 +226,8 @@ impl Chip8 {
             0xF => unimplemented!("{opcode:#06X}"),
             _ => unreachable!(),
         };
+
+        Ok(())
     }
 
     pub fn display(&self) -> &[bool] {
@@ -226,14 +297,14 @@ mod tests {
     #[test]
     fn jumping() {
         let mut machine = Chip8::from_rom(&[0x13, 0x00]).unwrap();
-        machine.step();
+        machine.step().unwrap();
         assert_eq!(machine.pc, 0x300);
     }
 
     #[test]
     fn set_register() {
         let mut machine = Chip8::from_rom(&[0x6A, 0x42]).unwrap();
-        machine.step();
+        machine.step().unwrap();
         assert_eq!(machine.v[0xA], 0x42);
         assert_eq!(machine.pc, 0x202);
     }
@@ -241,7 +312,7 @@ mod tests {
     #[test]
     fn add_register_no_wrap() {
         let mut machine = Chip8::from_rom(&[0x70, 0x01]).unwrap();
-        machine.step();
+        machine.step().unwrap();
         assert_eq!(machine.v[0x0], 0x01);
         assert_eq!(machine.pc, 0x202);
     }
@@ -249,8 +320,8 @@ mod tests {
     #[test]
     fn add_register_wrap() {
         let mut machine = Chip8::from_rom(&[0x60, 0xFF, 0x70, 0x01]).unwrap();
-        machine.step();
-        machine.step();
+        machine.step().unwrap();
+        machine.step().unwrap();
         assert_eq!(machine.v[0x0], 0x00);
         assert_eq!(machine.pc, 0x204);
     }
@@ -258,17 +329,17 @@ mod tests {
     #[test]
     fn register_i() {
         let mut machine = Chip8::from_rom(&[0xA1, 0x23]).unwrap();
-        machine.step();
+        machine.step().unwrap();
         assert_eq!(machine.i, 0x123);
     }
 
     #[test]
     fn clear_screen() {
         let mut machine = Chip8::from_rom(&[0xA0, 0x50, 0xD0, 0x05, 0x00, 0xE0]).unwrap();
-        machine.step(); // I = font 0
-        machine.step(); // draw
+        machine.step().unwrap(); // I = font 0
+        machine.step().unwrap(); // draw
         assert!(machine.framebuffer.iter().filter(|&&p| p).count() > 0);
-        machine.step(); // clear
+        machine.step().unwrap(); // clear
         assert_eq!(machine.framebuffer.iter().filter(|&&p| p).count(), 0);
     }
 
@@ -276,7 +347,7 @@ mod tests {
     fn run(rom: &[u8], steps: usize) -> Chip8 {
         let mut machine = Chip8::from_rom(rom).unwrap();
         for _ in 0..steps {
-            machine.step();
+            machine.step().unwrap();
         }
         machine
     }
@@ -349,3 +420,6 @@ mod tests {
         assert_eq!(pixels_on(&machine), 14);
     }
 }
+
+#[cfg(test)]
+mod c3_tests;
