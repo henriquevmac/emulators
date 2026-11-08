@@ -63,7 +63,7 @@ impl Chip8 {
         Ok(machine)
     }
 
-    pub fn fetch(&mut self) -> u16 {
+    fn fetch(&mut self) -> u16 {
         let first = self.memory[self.pc as usize] as u16;
         self.pc += 1;
         let second = self.memory[self.pc as usize] as u16;
@@ -93,6 +93,38 @@ impl Chip8 {
 
     fn get_kind(opcode: u16) -> u8 {
         ((opcode & KIND_MASK) >> 12) as u8
+    }
+
+    pub fn step(&mut self) {
+        let opcode = self.fetch();
+        let x = Self::get_x(opcode);
+        let y = Self::get_y(opcode);
+        let n = Self::get_n(opcode);
+        let nn = Self::get_nn(opcode);
+        let nnn = Self::get_nnn(opcode);
+        let kind = Self::get_kind(opcode);
+        match kind {
+            0x0 => match nn {
+                0xE0 => {}
+                _ => unimplemented!("{opcode:#06X}"),
+            },
+            0x1 => self.pc = nnn,
+            0x2 => unimplemented!("{opcode:#06X}"),
+            0x3 => unimplemented!("{opcode:#06X}"),
+            0x4 => unimplemented!("{opcode:#06X}"),
+            0x5 => unimplemented!("{opcode:#06X}"),
+            0x6 => self.v[x] = nn,
+            0x7 => self.v[x] = self.v[x].wrapping_add(nn),
+            0x8 => unimplemented!("{opcode:#06X}"),
+            0x9 => unimplemented!("{opcode:#06X}"),
+            0xA => self.i = nnn,
+            0xB => unimplemented!("{opcode:#06X}"),
+            0xC => unimplemented!("{opcode:#06X}"),
+            0xD => {}
+            0xE => unimplemented!("{opcode:#06X}"),
+            0xF => unimplemented!("{opcode:#06X}"),
+            _ => unreachable!(),
+        };
     }
 }
 
@@ -153,5 +185,44 @@ mod tests {
         assert_eq!(Chip8::get_nn(opcode), 0x23);
         assert_eq!(Chip8::get_nnn(opcode), 0x123);
         assert_eq!(Chip8::get_kind(opcode), 0xD);
+    }
+
+    #[test]
+    fn jumping() {
+        let mut machine = Chip8::from_rom(&[0x13, 0x00]).unwrap();
+        machine.step();
+        assert_eq!(machine.pc, 0x300);
+    }
+
+    #[test]
+    fn set_register() {
+        let mut machine = Chip8::from_rom(&[0x6A, 0x42]).unwrap();
+        machine.step();
+        assert_eq!(machine.v[0xA], 0x42);
+        assert_eq!(machine.pc, 0x202);
+    }
+
+    #[test]
+    fn add_register_no_wrap() {
+        let mut machine = Chip8::from_rom(&[0x70, 0x01]).unwrap();
+        machine.step();
+        assert_eq!(machine.v[0x0], 0x01);
+        assert_eq!(machine.pc, 0x202);
+    }
+
+    #[test]
+    fn add_register_wrap() {
+        let mut machine = Chip8::from_rom(&[0x60, 0xFF, 0x70, 0x01]).unwrap();
+        machine.step();
+        machine.step();
+        assert_eq!(machine.v[0x0], 0x00);
+        assert_eq!(machine.pc, 0x204);
+    }
+
+    #[test]
+    fn register_i() {
+        let mut machine = Chip8::from_rom(&[0xA1, 0x23]).unwrap();
+        machine.step();
+        assert_eq!(machine.i, 0x123);
     }
 }
