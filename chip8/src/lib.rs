@@ -2,6 +2,9 @@ const ROM_START: usize = 0x200;
 const FONT_START: usize = 0x50;
 const MEMORY_SIZE: usize = 4096;
 const MAX_ROM_SIZE: usize = MEMORY_SIZE - ROM_START;
+const PIXEL_WIDTH: usize = 64;
+const PIXEL_HEIGHT: usize = 32;
+const NUM_PIXELS: usize = PIXEL_WIDTH * PIXEL_HEIGHT;
 
 const X_MASK: u16 = 0x0F00;
 const Y_MASK: u16 = 0x00F0;
@@ -35,6 +38,7 @@ pub struct Chip8 {
     i: u16,
     pc: u16,
     stack: Vec<u16>,
+    framebuffer: [bool; NUM_PIXELS],
 }
 
 impl Chip8 {
@@ -48,6 +52,7 @@ impl Chip8 {
             i: 0,
             pc: ROM_START as u16,
             stack,
+            framebuffer: [false; NUM_PIXELS],
         }
     }
 
@@ -79,8 +84,8 @@ impl Chip8 {
         ((opcode & Y_MASK) >> 4) as usize
     }
 
-    fn get_n(opcode: u16) -> u8 {
-        (opcode & N_MASK) as u8
+    fn get_n(opcode: u16) -> usize {
+        (opcode & N_MASK) as usize
     }
 
     fn get_nn(opcode: u16) -> u8 {
@@ -95,6 +100,10 @@ impl Chip8 {
         ((opcode & KIND_MASK) >> 12) as u8
     }
 
+    fn get_pixel_idx(x: usize, y: usize) -> usize {
+        y * PIXEL_WIDTH + x
+    }
+
     pub fn step(&mut self) {
         let opcode = self.fetch();
         let x = Self::get_x(opcode);
@@ -105,7 +114,7 @@ impl Chip8 {
         let kind = Self::get_kind(opcode);
         match kind {
             0x0 => match nn {
-                0xE0 => {}
+                0xE0 => self.framebuffer.fill(false),
                 _ => unimplemented!("{opcode:#06X}"),
             },
             0x1 => self.pc = nnn,
@@ -120,7 +129,30 @@ impl Chip8 {
             0xA => self.i = nnn,
             0xB => unimplemented!("{opcode:#06X}"),
             0xC => unimplemented!("{opcode:#06X}"),
-            0xD => {}
+            0xD => {
+                let coord_x = self.v[x] as usize % PIXEL_WIDTH;
+                let coord_y = self.v[y] as usize % PIXEL_HEIGHT;
+                self.v[0xF] = 0;
+                'rows: for row in 0..n {
+                    if coord_y + row >= PIXEL_HEIGHT {
+                        break;
+                    }
+                    let sprite = self.memory[self.i as usize + row];
+                    for b in 0..8 {
+                        if coord_x + b >= PIXEL_WIDTH {
+                            continue 'rows;
+                        }
+                        let idx = Chip8::get_pixel_idx(coord_x + b, coord_y + row);
+                        let sprite_bit = ((sprite >> (7 - b)) & 1) == 1;
+                        if sprite_bit {
+                            if self.framebuffer[idx] {
+                                self.v[0xF] = 1;
+                            }
+                            self.framebuffer[idx] = !self.framebuffer[idx];
+                        }
+                    }
+                }
+            }
             0xE => unimplemented!("{opcode:#06X}"),
             0xF => unimplemented!("{opcode:#06X}"),
             _ => unreachable!(),
@@ -224,5 +256,92 @@ mod tests {
         let mut machine = Chip8::from_rom(&[0xA1, 0x23]).unwrap();
         machine.step();
         assert_eq!(machine.i, 0x123);
+    }
+
+    #[test]
+    fn clear_screen() {
+        let mut machine = Chip8::from_rom(&[0xA0, 0x50, 0xD0, 0x05, 0x00, 0xE0]).unwrap();
+        machine.step(); // I = font 0
+        machine.step(); // draw
+        assert!(machine.framebuffer.iter().filter(|&&p| p).count() > 0);
+        machine.step(); // clear
+        assert_eq!(machine.framebuffer.iter().filter(|&&p| p).count(), 0);
+    }
+
+    /// Loads `rom` and executes `steps` instructions.
+    fn run(rom: &[u8], steps: usize) -> Chip8 {
+        let mut machine = Chip8::from_rom(rom).unwrap();
+        for _ in 0..steps {
+            machine.step();
+        }
+        machine
+    }
+
+    fn pixel(machine: &Chip8, x: usize, y: usize) -> bool {
+        machine.framebuffer[Chip8::get_pixel_idx(x, y)]
+    }
+
+    fn pixels_on(machine: &Chip8) -> usize {
+        machine.framebuffer.iter().filter(|&&p| p).count()
+    }
+
+    // Font "0" is F0 90 90 90 F0:
+    //   ####
+    //   #..#
+    //   #..#
+    //   #..#
+    //   ####
+    // which is 14 pixels.
+
+    #[test]
+    fn draw_sprite() {
+        // I = font 0; draw at (V0, V0) = (0, 0), 5 rows
+        let machine = run(&[0xA0, 0x50, 0xD0, 0x05], 2);
+        assert_eq!(pixels_on(&machine), 14);
+        assert!(pixel(&machine, 0, 0)); // top-left corner
+        assert!(pixel(&machine, 3, 0)); // top-right corner
+        assert!(!pixel(&machine, 1, 1)); // hollow middle
+        assert!(!pixel(&machine, 4, 0)); // high bits only: column 4 stays off
+        assert_eq!(machine.v[0xF], 0); // no collision
+    }
+
+    #[test]
+    fn draw_twice_erases_and_sets_collision() {
+        let machine = run(&[0xA0, 0x50, 0xD0, 0x05, 0xD0, 0x05], 3);
+        assert_eq!(pixels_on(&machine), 0);
+        assert_eq!(machine.v[0xF], 1);
+    }
+
+    #[test]
+    fn draw_clips_at_right_edge() {
+        // V0 = 62, V1 = 0; draw at (V0, V1)
+        let machine = run(&[0xA0, 0x50, 0x60, 62, 0x61, 0, 0xD0, 0x15], 4);
+        assert!(pixel(&machine, 62, 0));
+        assert!(pixel(&machine, 63, 0));
+        // columns 64-65 of the sprite must not wrap onto the left side
+        assert!(!pixel(&machine, 0, 0));
+        assert!(!pixel(&machine, 1, 0));
+        // or spill into the next row
+        assert!(!pixel(&machine, 0, 1));
+    }
+
+    #[test]
+    fn draw_clips_at_bottom_edge() {
+        // V0 = 0, V1 = 30; only rows 30 and 31 fit
+        let machine = run(&[0xA0, 0x50, 0x60, 0, 0x61, 30, 0xD0, 0x15], 4);
+        assert!(pixel(&machine, 0, 30));
+        assert!(pixel(&machine, 0, 31));
+        // rows 32-34 of the sprite must not wrap onto the top
+        assert!(!pixel(&machine, 0, 0));
+        assert!(!pixel(&machine, 0, 1));
+        assert_eq!(pixels_on(&machine), 4 + 2); // "####" + "#..#"
+    }
+
+    #[test]
+    fn draw_start_position_wraps() {
+        // V0 = 66, V1 = 33 wrap to (2, 1) before drawing
+        let machine = run(&[0xA0, 0x50, 0x60, 66, 0x61, 33, 0xD0, 0x15], 4);
+        assert!(pixel(&machine, 2, 1));
+        assert_eq!(pixels_on(&machine), 14);
     }
 }
