@@ -2,8 +2,8 @@ const ROM_START: usize = 0x200;
 const FONT_START: usize = 0x50;
 const MEMORY_SIZE: usize = 4096;
 const MAX_ROM_SIZE: usize = MEMORY_SIZE - ROM_START;
-const PIXEL_WIDTH: usize = 64;
-const PIXEL_HEIGHT: usize = 32;
+pub const PIXEL_WIDTH: usize = 64;
+pub const PIXEL_HEIGHT: usize = 32;
 const NUM_PIXELS: usize = PIXEL_WIDTH * PIXEL_HEIGHT;
 
 const X_MASK: u16 = 0x0F00;
@@ -157,6 +157,10 @@ impl Chip8 {
             0xF => unimplemented!("{opcode:#06X}"),
             _ => unreachable!(),
         };
+    }
+
+    pub fn display(&self) -> &[bool] {
+        &self.framebuffer
     }
 }
 
