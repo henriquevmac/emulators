@@ -40,6 +40,10 @@ pub struct Chip8 {
     pc: u16,
     stack: Vec<u16>,
     framebuffer: [bool; NUM_PIXELS],
+    keys: [bool; 16],
+    sound_timer: u8,
+    delay_timer: u8,
+    waiting_key: Option<usize>,
 }
 
 impl Chip8 {
@@ -54,6 +58,10 @@ impl Chip8 {
             pc: ROM_START as u16,
             stack,
             framebuffer: [false; NUM_PIXELS],
+            keys: [false; 16],
+            sound_timer: 0,
+            delay_timer: 0,
+            waiting_key: None,
         }
     }
 
@@ -196,8 +204,8 @@ impl Chip8 {
                 }
             }
             0xA => self.i = nnn,
-            0xB => unimplemented!("{opcode:#06X}"),
-            0xC => unimplemented!("{opcode:#06X}"),
+            0xB => self.pc = self.v[0] as u16 + nnn,
+            0xC => self.v[x] = rand::random::<u8>() & nn,
             0xD => {
                 let coord_x = self.v[x] as usize % PIXEL_WIDTH;
                 let coord_y = self.v[y] as usize % PIXEL_HEIGHT;
@@ -222,8 +230,63 @@ impl Chip8 {
                     }
                 }
             }
-            0xE => unimplemented!("{opcode:#06X}"),
-            0xF => unimplemented!("{opcode:#06X}"),
+            0xE => match nn {
+                0x9E => {
+                    if self.keys[(self.v[x] & 0xF) as usize] {
+                        self.pc += 2;
+                    }
+                }
+                0xA1 => {
+                    if !self.keys[(self.v[x] & 0xF) as usize] {
+                        self.pc += 2;
+                    }
+                }
+                _ => unimplemented!("{opcode:#06X}"),
+            },
+            0xF => match nn {
+                0x07 => self.v[x] = self.delay_timer,
+                0x15 => self.delay_timer = self.v[x],
+                0x18 => self.sound_timer = self.v[x],
+                0x1E => self.i = self.i.wrapping_add(self.v[x] as u16),
+                0x0A => match self.waiting_key {
+                    None => {
+                        if let Some(key) = self.keys.iter().position(|&d| d) {
+                            self.waiting_key = Some(key);
+                        }
+                        self.pc -= 2;
+                    }
+                    Some(waiting_key) => {
+                        if !self.keys[waiting_key] {
+                            self.v[x] = waiting_key as u8;
+                            self.waiting_key = None;
+                        } else {
+                            self.pc -= 2;
+                        }
+                    }
+                },
+                0x29 => self.i = FONT_START as u16 + (self.v[x] as u16 & 0xF) * 5,
+                0x33 => {
+                    let hundreds = self.v[x] / 100;
+                    let tens = self.v[x] / 10 % 10;
+                    let ones = self.v[x] % 10;
+                    self.memory[self.i as usize] = hundreds;
+                    self.memory[self.i as usize + 1] = tens;
+                    self.memory[self.i as usize + 2] = ones;
+                }
+                0x55 => {
+                    for idx in 0..=x {
+                        self.memory[self.i as usize] = self.v[idx];
+                        self.i += 1;
+                    }
+                }
+                0x65 => {
+                    for idx in 0..=x {
+                        self.v[idx] = self.memory[self.i as usize];
+                        self.i += 1;
+                    }
+                }
+                _ => unimplemented!("{opcode:#06X}"),
+            },
             _ => unreachable!(),
         };
 
@@ -232,6 +295,19 @@ impl Chip8 {
 
     pub fn display(&self) -> &[bool] {
         &self.framebuffer
+    }
+
+    pub fn set_key(&mut self, key: usize, pressed: bool) {
+        self.keys[key] = pressed;
+    }
+
+    pub fn sound_active(&self) -> bool {
+        self.sound_timer > 0
+    }
+
+    pub fn tick_timers(&mut self) {
+        self.sound_timer = self.sound_timer.saturating_sub(1);
+        self.delay_timer = self.delay_timer.saturating_sub(1);
     }
 }
 
@@ -423,3 +499,6 @@ mod tests {
 
 #[cfg(test)]
 mod c3_tests;
+
+#[cfg(test)]
+mod c3_io_tests;
